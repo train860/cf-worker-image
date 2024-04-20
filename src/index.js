@@ -74,15 +74,27 @@ export default {
 		if (hasCache) {
 			return hasCache;
 		}
-
+		const urlObj = new URL(request.url);
+		let { pathname } = urlObj;
+		// 去掉路径前缀
+		pathname = pathname.replace('/', '');
 		// 入参提取与校验
-		const query = queryString.parse(new URL(request.url).search);
+		const query = queryString.parse(urlObj.search);
 		let { w, h, format = 'webp', quality = 75 } = query;
-		//将url中的host部分替换为目标host
-		const url = request.url.replace(new URL(request.url).host, env.TARGET_HOST);
+		const object = await env.MY_BUCKET.get(pathname);
+
+		if (object === null) {
+			return new Response('Object Not Found', { status: 404 });
+		}
+		const headers = new Headers();
+		object.writeHttpMetadata(headers);
+		headers.set('etag', object.httpEtag);
+
 		if (!w && !h) {
 			//返回原图
-			return fetch(url, { headers: request.headers });
+			return new Response(object.body, {
+				headers,
+			});
 		}
 		if (!w) {
 			w = 0;
@@ -94,16 +106,7 @@ export default {
 		if (isNaN(w) || isNaN(h) || w < 0 || h < 0) {
 			return new Response('Invalid w or h', { status: 400 });
 		}
-
-		// 目标图片获取与检查
-		const imageRes = await fetch(url, { headers: request.headers });
-		if (imageRes.status === 404) {
-			return new Response('Not Found', { status: 404 });
-		}
-		if (!imageRes.ok) {
-			return imageRes;
-		}
-		const imageBytes = new Uint8Array(await imageRes.arrayBuffer());
+		const imageBytes = new Uint8Array(await object.arrayBuffer());
 		try {
 			const inputImage = photon.PhotonImage.new_from_byteslice(imageBytes);
 			const imageData = inputImage.get_image_data();
@@ -112,7 +115,9 @@ export default {
 			const originalWidth = imageData.width;
 			const originalHeight = imageData.height;
 			if (w > originalWidth || h > originalHeight) {
-				return imageRes;
+				return new Response(object.body, {
+					headers,
+				});
 			}
 
 			//如果w和h都不为0，且比例跟imageData的比例不一致，则需要先缩放再裁剪
@@ -132,7 +137,7 @@ export default {
 					}
 					// 应用等比缩放后裁剪以达到目标尺寸
 					action = `resize!${targetWidth},${targetHeight},1|crop!0,0,${w},${h}`;
-				}else{
+				} else {
 					action = `resize!${w},${h},1`;
 				}
 			} else {
@@ -177,7 +182,7 @@ export default {
 			return imageResponse;
 		} catch (error) {
 			const errorResponse = new Response(imageBytes || null, {
-				headers: imageRes.headers,
+				headers: headers,
 				status: 'RuntimeError' === error.name ? 415 : 500,
 			});
 			console.log('error:', error);
