@@ -5,7 +5,7 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "start": "wrangler dev",
+    "start": "wrangler dev --remote",
     "build": "wrangler build",
     "log": "wrangler tail"
   },
